@@ -5,7 +5,7 @@ pydantic>=2.0
 pydantic-settings>=2.2.1
 motor>=3.4.0
 pymongo>=4.7.0
-qdrant-client>=1.9.0
+qdrant-client>=1.9.0,<1.11.0
 docling>=1.0.0
 FlagEmbedding>=1.2.9
 openai>=1.30.0
@@ -17,4 +17,3 @@ loguru>=0.7.0
 pypdf>=4.2.0
 pytest>=8.2.0
 pytest-asyncio>=0.23.7
-

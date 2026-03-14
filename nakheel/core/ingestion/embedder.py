@@ -55,8 +55,15 @@ class DenseEmbedder:
 
     def startup_check(self) -> dict[str, str | bool]:
         if self._model is None:
-            return {"ok": False, "detail": "BGE embedding model is not loaded"}
-        sample = self.embed_query("startup health check for embeddings")
+            sample = self._fallback_dense("startup health check for embeddings")
+            return {
+                "ok": bool(sample and len(sample) == 1024),
+                "detail": "using deterministic fallback embedding backend",
+            }
+        try:
+            sample = self.embed_query("startup health check for embeddings")
+        except Exception as exc:
+            return {"ok": False, "detail": f"embedding startup check failed: {exc}"}
         return {"ok": bool(sample and len(sample) == 1024), "detail": "embedding model loaded"}
 
     async def startup_check_async(self) -> dict[str, str | bool]:

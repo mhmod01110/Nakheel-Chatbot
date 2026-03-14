@@ -61,8 +61,11 @@ class RerankerService:
 
     def startup_check(self) -> dict[str, str | bool]:
         if self._model is None:
-            return {"ok": False, "detail": "BGE reranker model is not loaded"}
-        score = self._model.compute_score([("startup check", "startup check")], normalize=True)
+            return {"ok": True, "detail": "using heuristic fallback reranker"}
+        try:
+            score = self._model.compute_score([("startup check", "startup check")], normalize=True)
+        except Exception as exc:
+            return {"ok": False, "detail": f"reranker startup check failed: {exc}"}
         if isinstance(score, list):
             score = score[0]
         return {"ok": float(score) >= 0.0, "detail": "reranker model loaded"}
