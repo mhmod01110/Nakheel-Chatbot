@@ -11,9 +11,7 @@ services:
       MONGODB_URI: mongodb://127.0.0.1:27017
       QDRANT_HOST: 127.0.0.1
       QDRANT_PORT: 6333
-      TEMP_DIR: /app/tmp/nakheel
-    volumes:
-      - ./tmp:/app/tmp
+      TEMP_DIR: /tmp/nakheel
     depends_on:
       qdrant:
         condition: service_healthy
