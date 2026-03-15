@@ -3,11 +3,13 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
+from uuid import UUID
 
 import pytest
 
 from nakheel.config import Settings
 from nakheel.core.ingestion.indexer import DocumentIndexer
+from nakheel.db.qdrant import QdrantDatabase
 from nakheel.models.chunk import Chunk
 from nakheel.models.document import DocumentSourceType, DocumentStatus
 
@@ -57,6 +59,10 @@ class FakeQdrant:
     def __init__(self):
         self.upserted = []
         self.deleted = []
+
+    @staticmethod
+    def normalize_point_id(point_id):
+        return QdrantDatabase.normalize_point_id(point_id)
 
     async def upsert_points_async(self, points):
         self.upserted.extend(points)
@@ -114,7 +120,7 @@ def build_indexer(*, fail_on_chunk_insert: bool = False, fail_on_audit: bool = F
 
 @pytest.mark.asyncio
 async def test_indexer_tracks_phase_progress():
-    indexer, mongo, _qdrant = build_indexer()
+    indexer, mongo, qdrant = build_indexer()
     await indexer._create_document_record(
         doc_id="doc-1",
         batch_id="batch-1",
@@ -149,6 +155,11 @@ async def test_indexer_tracks_phase_progress():
     assert seen_steps == ["chunking", "embedding", "persisting"]
     assert result["status"] == "indexed"
     assert mongo.collection("documents").documents["doc-1"]["current_step"] == "indexed"
+    stored_qdrant_id = mongo.collection("documents").documents["doc-1"]["qdrant_ids"][0]
+    UUID(stored_qdrant_id)
+    assert stored_qdrant_id != "chk-1"
+    assert qdrant.upserted[0].id == stored_qdrant_id
+    assert qdrant.upserted[0].payload["chunk_id"] == "chk-1"
 
 
 @pytest.mark.asyncio
@@ -181,7 +192,7 @@ async def test_indexer_rolls_back_qdrant_when_chunk_persist_fails():
             started=0.0,
         )
 
-    assert qdrant.deleted == [["chk-1"]]
+    UUID(qdrant.deleted[0][0])
     assert mongo.collection("documents").documents["doc-1"]["status"] == DocumentStatus.FAILED.value
 
 
@@ -217,3 +228,45 @@ async def test_indexer_keeps_indexed_status_when_audit_logging_fails():
 
     assert qdrant.deleted == []
     assert mongo.collection("documents").documents["doc-1"]["status"] == DocumentStatus.INDEXED.value
+
+
+@pytest.mark.asyncio
+async def test_inject_raw_text_uses_uuid_compatible_qdrant_point_ids():
+    indexer, mongo, qdrant = build_indexer()
+
+    result = await indexer.inject_raw_text(
+        content="New Valley Governorate information for testing.",
+        title="Raw",
+        description=None,
+        tags=[],
+        language_hint="auto",
+    )
+
+    assert result["status"] == "indexed"
+    stored_qdrant_id = mongo.collection("documents").documents[result["doc_id"]]["qdrant_ids"][0]
+    UUID(stored_qdrant_id)
+    assert qdrant.upserted[0].id == stored_qdrant_id
+    assert qdrant.upserted[0].payload["chunk_id"] == "chk-1"
+
+
+@pytest.mark.asyncio
+async def test_index_pdf_document_uses_uuid_compatible_qdrant_point_ids():
+    indexer, mongo, qdrant = build_indexer()
+
+    result = await indexer._index_pdf_document(
+        doc_id="doc-1",
+        batch_id="batch-1",
+        filename="sample.pdf",
+        file_bytes=b"%PDF-1.4 sample",
+        title=None,
+        description=None,
+        tags=[],
+        language_hint="auto",
+        create_record=True,
+    )
+
+    assert result["status"] == "indexed"
+    stored_qdrant_id = mongo.collection("documents").documents["doc-1"]["qdrant_ids"][0]
+    UUID(stored_qdrant_id)
+    assert qdrant.upserted[0].id == stored_qdrant_id
+    assert qdrant.upserted[0].payload["chunk_id"] == "chk-1"

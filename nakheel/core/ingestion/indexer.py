@@ -409,10 +409,11 @@ class DocumentIndexer:
             )
 
             for chunk, dense_vec, sparse_vec in zip(chunks, dense_vectors, sparse_vectors):
-                qdrant_ids.append(chunk.chunk_id)
+                point_id = self.qdrant.normalize_point_id(chunk.chunk_id)
+                qdrant_ids.append(point_id)
                 points.append(
                     PointStruct(
-                        id=chunk.chunk_id,
+                        id=point_id,
                         vector={
                             "dense": dense_vec,
                             "sparse": SparseVector(

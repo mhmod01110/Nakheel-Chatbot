@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from types import SimpleNamespace
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 from qdrant_client import QdrantClient
 from qdrant_client.http.exceptions import UnexpectedResponse
@@ -9,6 +11,7 @@ from qdrant_client.models import (
     Distance,
     HnswConfigDiff,
     OptimizersConfigDiff,
+    PointStruct,
     SparseIndexParams,
     SparseVector,
     SparseVectorParams,
@@ -23,6 +26,11 @@ try:
 except ImportError:  # pragma: no cover
     VectorStoreQuery = None
     QdrantVectorStore = None
+
+
+LEGACY_POINT_ID_RE = re.compile(
+    r"^[A-Za-z0-9_]+-(?P<uuid>[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$"
+)
 
 
 class QdrantDatabase:
@@ -80,14 +88,20 @@ class QdrantDatabase:
 
     def upsert_points(self, points: list) -> None:
         assert self.client is not None
-        self.client.upsert(collection_name=self.settings.QDRANT_COLLECTION, points=points)
+        self.client.upsert(
+            collection_name=self.settings.QDRANT_COLLECTION,
+            points=self._normalize_points(points),
+        )
 
     async def upsert_points_async(self, points: list) -> None:
         await asyncio.to_thread(self.upsert_points, points)
 
     def delete_points(self, point_ids: list[str]) -> None:
         assert self.client is not None
-        self.client.delete(collection_name=self.settings.QDRANT_COLLECTION, points_selector=point_ids)
+        self.client.delete(
+            collection_name=self.settings.QDRANT_COLLECTION,
+            points_selector=[self.normalize_point_id(point_id) for point_id in point_ids],
+        )
 
     async def delete_points_async(self, point_ids: list[str]) -> None:
         await asyncio.to_thread(self.delete_points, point_ids)
@@ -136,7 +150,42 @@ class QdrantDatabase:
         return self._vector_store
 
     @staticmethod
-    def _normalize_llama_index_result(result) -> list:
+    def normalize_point_id(point_id):
+        if isinstance(point_id, int):
+            return point_id if point_id >= 0 else str(uuid5(NAMESPACE_URL, str(point_id)))
+        if isinstance(point_id, UUID):
+            return str(point_id)
+
+        raw_value = str(point_id)
+        try:
+            return str(UUID(raw_value))
+        except ValueError:
+            pass
+
+        match = LEGACY_POINT_ID_RE.fullmatch(raw_value)
+        if match is not None:
+            return str(UUID(match.group("uuid")))
+        return str(uuid5(NAMESPACE_URL, raw_value))
+
+    @classmethod
+    def _normalize_points(cls, points: list) -> list:
+        normalized = []
+        for point in points:
+            normalized_id = cls.normalize_point_id(point.id)
+            if hasattr(point, "model_copy"):
+                normalized.append(point.model_copy(update={"id": normalized_id}))
+            else:
+                normalized.append(
+                    PointStruct(
+                        id=normalized_id,
+                        vector=point.vector,
+                        payload=point.payload,
+                    )
+                )
+        return normalized
+
+    @classmethod
+    def _normalize_llama_index_result(cls, result) -> list:
         ids = list(getattr(result, "ids", None) or [])
         nodes = list(getattr(result, "nodes", None) or [])
         similarities = list(getattr(result, "similarities", None) or [])
@@ -147,20 +196,21 @@ class QdrantDatabase:
                 payload = dict(getattr(node, "metadata", {}) or {})
                 chunk_id = payload.get("chunk_id") or (ids[index] if index < len(ids) else getattr(node, "node_id", None))
                 payload.setdefault("chunk_id", chunk_id)
+                point_id = ids[index] if index < len(ids) else getattr(node, "node_id", None) or chunk_id
                 normalized.append(
                     SimpleNamespace(
-                        id=chunk_id,
+                        id=cls.normalize_point_id(point_id),
                         payload=payload,
                         score=similarities[index] if index < len(similarities) else None,
                     )
                 )
             return normalized
 
-        for index, chunk_id in enumerate(ids):
+        for index, point_id in enumerate(ids):
             normalized.append(
                 SimpleNamespace(
-                    id=chunk_id,
-                    payload={"chunk_id": chunk_id},
+                    id=cls.normalize_point_id(point_id),
+                    payload={"chunk_id": point_id},
                     score=similarities[index] if index < len(similarities) else None,
                 )
             )
