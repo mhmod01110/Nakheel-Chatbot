@@ -160,6 +160,7 @@ async def test_indexer_tracks_phase_progress():
     assert stored_qdrant_id != "chk-1"
     assert qdrant.upserted[0].id == stored_qdrant_id
     assert qdrant.upserted[0].payload["chunk_id"] == "chk-1"
+    assert qdrant.upserted[0].payload["text"] == "New Valley Governorate information for testing."
 
 
 @pytest.mark.asyncio
@@ -247,6 +248,7 @@ async def test_inject_raw_text_uses_uuid_compatible_qdrant_point_ids():
     UUID(stored_qdrant_id)
     assert qdrant.upserted[0].id == stored_qdrant_id
     assert qdrant.upserted[0].payload["chunk_id"] == "chk-1"
+    assert qdrant.upserted[0].payload["text"] == "New Valley Governorate information for testing."
 
 
 @pytest.mark.asyncio
@@ -270,3 +272,4 @@ async def test_index_pdf_document_uses_uuid_compatible_qdrant_point_ids():
     UUID(stored_qdrant_id)
     assert qdrant.upserted[0].id == stored_qdrant_id
     assert qdrant.upserted[0].payload["chunk_id"] == "chk-1"
+    assert qdrant.upserted[0].payload["text"] == "New Valley Governorate information for testing."

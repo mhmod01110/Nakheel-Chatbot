@@ -427,6 +427,7 @@ class DocumentIndexer:
                             "chunk_index": chunk.chunk_index,
                             "section_title": chunk.section_title,
                             "parent_section": chunk.parent_section,
+                            "text": chunk.text,
                             "language": chunk.language,
                             "page_numbers": chunk.page_numbers,
                             "token_count": chunk.token_count,
