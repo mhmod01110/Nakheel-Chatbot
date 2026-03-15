@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC
 from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
@@ -14,7 +15,11 @@ class MongoDatabase:
         self.db: AsyncIOMotorDatabase | None = None
 
     async def connect(self) -> None:
-        self.client = AsyncIOMotorClient(self.settings.MONGODB_URI)
+        self.client = AsyncIOMotorClient(
+            self.settings.MONGODB_URI,
+            tz_aware=True,
+            tzinfo=UTC,
+        )
         self.db = self.client[self.settings.MONGODB_DB_NAME]
 
     async def close(self) -> None:

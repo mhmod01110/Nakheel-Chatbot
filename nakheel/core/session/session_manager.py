@@ -44,6 +44,8 @@ class SessionManager:
         if not record:
             raise SessionNotFoundError(f"No session with id: {session_id}")
         session = Session.model_validate(record)
+        session.created_at = self._ensure_utc(session.created_at)
+        session.updated_at = self._ensure_utc(session.updated_at)
         expired_at = datetime.now(UTC) - timedelta(hours=self.settings.SESSION_TTL_HOURS)
         if session.updated_at < expired_at or not session.is_active:
             await self.mongo.collection("sessions").update_one(
@@ -138,3 +140,11 @@ class SessionManager:
         if preferred != "auto":
             return preferred
         return detect_language(text).code
+
+    @staticmethod
+    def _ensure_utc(value: datetime) -> datetime:
+        """Normalize naive datetimes from legacy Mongo decoding into UTC-aware values."""
+
+        if value.tzinfo is None:
+            return value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)
