@@ -5,6 +5,7 @@ import socket
 import subprocess
 import sys
 import time
+from urllib.parse import urlparse
 
 
 def wait_for(host: str, port: int, service_name: str, timeout_seconds: int = 90) -> None:
@@ -24,10 +25,11 @@ def main() -> int:
     qdrant_host = os.getenv("QDRANT_HOST", "qdrant")
     qdrant_port = int(os.getenv("QDRANT_PORT", "6333"))
 
-    mongo_host_port = mongo_uri.split("://", 1)[-1].split("/", 1)[0].split(",")[0]
-    mongo_host, mongo_port = mongo_host_port.split(":")
+    parsed = urlparse(mongo_uri)
+    mongo_host = parsed.hostname or "localhost"
+    mongo_port = parsed.port or 27017
 
-    wait_for(mongo_host, int(mongo_port), "MongoDB")
+    wait_for(mongo_host, mongo_port, "MongoDB")
     wait_for(qdrant_host, qdrant_port, "Qdrant")
 
     process = subprocess.run(

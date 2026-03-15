@@ -97,7 +97,11 @@ async def lifespan(app: FastAPI):
         reranker=reranker,
         llm_client=llm_client,
     )
-    failed_checks = [name for name, status in startup_checks.items() if not status["ok"]]
+    failed_checks = [
+        name
+        for name, status in startup_checks.items()
+        if not status["ok"] and name in {"mongodb", "qdrant", "embedder", "llm"}
+    ]
     if failed_checks:
         await mongo.close()
         qdrant.close()
@@ -164,6 +168,6 @@ async def validation_exception_handler(_, exc: RequestValidationError) -> JSONRe
             "status": 422,
             "detail": "Request validation failed",
             "error": "VALIDATION_ERROR",
-            "errors": exc.errors(),
+            "errors": exc.errors(include_input=False),
         },
     )

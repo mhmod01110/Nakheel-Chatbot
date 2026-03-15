@@ -415,7 +415,10 @@ class DocumentIndexer:
                         },
                     )
                 )
+            upsert_succeeded = False
+            document_marked_indexed = False
             await self.qdrant.upsert_points_async(points)
+            upsert_succeeded = True
             await self.mongo.collection("chunks").insert_many([chunk.model_dump(mode="json") for chunk in chunks])
             indexed_at = datetime.now(UTC)
             await self.mongo.collection("documents").update_one(
@@ -435,6 +438,7 @@ class DocumentIndexer:
                     }
                 },
             )
+            document_marked_indexed = True
             await self.mongo.collection("audit_logs").insert_one(
                 {
                     "event": "document_indexed",
@@ -457,7 +461,13 @@ class DocumentIndexer:
                 "processing_time_ms": int((time.perf_counter() - started) * 1000),
             }
         except Exception as exc:
-            await self._mark_document_failed(doc_id, self._error_detail(exc))
+            if "upsert_succeeded" in locals() and upsert_succeeded and not document_marked_indexed:
+                try:
+                    await self.qdrant.delete_points_async(qdrant_ids)
+                except Exception:
+                    pass
+            if "document_marked_indexed" not in locals() or not document_marked_indexed:
+                await self._mark_document_failed(doc_id, self._error_detail(exc))
             raise
 
     async def _create_document_record(

@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
@@ -16,7 +16,15 @@ RUN pip install --upgrade pip \
 
 COPY . .
 
+RUN groupadd --gid 10001 appuser \
+    && useradd --uid 10001 --gid appuser --shell /usr/sbin/nologin --no-create-home appuser \
+    && chown -R appuser:appuser /app
+
+USER appuser
+
 EXPOSE 7000
 
-CMD ["python", "docker/wait_for_services.py"]
+HEALTHCHECK --interval=15s --timeout=10s --retries=5 \
+  CMD curl -sf http://localhost:7000/api/v1/health || exit 1
 
+CMD ["python", "docker/wait_for_services.py"]

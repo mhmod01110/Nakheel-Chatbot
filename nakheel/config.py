@@ -1,3 +1,4 @@
+import secrets
 from functools import lru_cache
 from pathlib import Path
 
@@ -12,7 +13,7 @@ class Settings(BaseSettings):
     APP_ENV: str = "development"
     APP_PORT: int = 7000
     APP_VERSION: str = "1.0.0"
-    APP_SECRET_KEY: str = "change-me"
+    APP_SECRET_KEY: str = Field(default_factory=lambda: secrets.token_urlsafe(32))
     API_V1_PREFIX: str = "/api/v1"
     LOG_LEVEL: str = "INFO"
 
@@ -27,13 +28,17 @@ class Settings(BaseSettings):
 
     OPENAI_API_KEY: str | None = None
     OPENAI_MODEL: str = "gpt-4o-mini"
+    OPENAI_EMBEDDING_MODEL: str = "text-embedding-3-small"
+    OPENAI_EMBEDDING_DIMENSIONS: int = 1024
     OPENAI_MAX_TOKENS: int = 1024
     OPENAI_TEMPERATURE: float = 0.3
 
-    BGE_EMBEDDING_MODEL: str = "BAAI/bge-m3"
     BGE_RERANKER_MODEL: str = "BAAI/bge-reranker-v2-m3"
-    BGE_DEVICE: str = "cpu"
     BGE_USE_FP16: bool = False
+
+    PDF_PARSER_BACKEND: str = "pypdf"
+    PDF_ENABLE_OCR: bool = False
+    PDF_ENABLE_TABLE_STRUCTURE: bool = False
 
     CHUNK_MAX_TOKENS: int = 512
     CHUNK_MIN_TOKENS: int = 50

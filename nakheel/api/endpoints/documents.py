@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from typing import Annotated, List, Optional
 
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile, status
+from loguru import logger
 
 from nakheel.api.deps import get_indexer, get_mongo, get_qdrant
 from nakheel.core.ingestion.indexer import DocumentIndexer, QueuedPdf
@@ -126,20 +127,42 @@ async def delete_document(
 ):
     """Delete a document and its associated vectors, chunks, and audit summary."""
 
-    document = await mongo.collection("documents").find_one({"doc_id": doc_id})
+    document = await mongo.collection("documents").find_one({"doc_id": doc_id}, {"_id": 0})
     if not document:
         raise DocumentNotFoundError(f"No document with id: {doc_id}")
     if document.get("status") == "processing":
         raise BadRequestError("Cannot delete document while it is being processed")
     qdrant_ids = document.get("qdrant_ids", [])
-    if qdrant_ids:
-        await qdrant.delete_points_async(qdrant_ids)
-    chunks_deleted = await mongo.collection("chunks").delete_many({"doc_id": doc_id})
-    document_deleted = await mongo.collection("documents").delete_one({"doc_id": doc_id})
     deleted_at = datetime.now(UTC)
-    await mongo.collection("audit_logs").insert_one(
-        {"event": "document_deleted", "doc_id": doc_id, "created_at": deleted_at}
-    )
+    qdrant_deleted = False
+    try:
+        if qdrant_ids:
+            await qdrant.delete_points_async(qdrant_ids)
+            qdrant_deleted = True
+        chunks_deleted = await mongo.collection("chunks").delete_many({"doc_id": doc_id})
+        document_deleted = await mongo.collection("documents").delete_one({"doc_id": doc_id})
+        await mongo.collection("audit_logs").insert_one(
+            {
+                "event": "document_deleted",
+                "doc_id": doc_id,
+                "created_at": deleted_at,
+                "partial_failure": False,
+            }
+        )
+    except Exception as exc:
+        logger.exception("Partial delete failure for document {}", doc_id)
+        await mongo.collection("audit_logs").insert_one(
+            {
+                "event": "document_delete_failed",
+                "doc_id": doc_id,
+                "created_at": deleted_at,
+                "partial_failure": True,
+                "qdrant_ids": qdrant_ids,
+                "qdrant_deleted": qdrant_deleted,
+                "error": str(exc),
+            }
+        )
+        raise
     return {
         "doc_id": doc_id,
         "deleted": True,
@@ -171,7 +194,7 @@ async def list_documents(
     total = await mongo.collection("documents").count_documents(filters)
     cursor = (
         mongo.collection("documents")
-        .find(filters)
+        .find(filters, {"_id": 0})
         .sort("uploaded_at", -1)
         .skip((page - 1) * per_page)
         .limit(per_page)
@@ -187,7 +210,7 @@ async def list_documents(
 async def get_document_status(doc_id: str, mongo: MongoDatabase = Depends(get_mongo)):
     """Return the latest persisted ingestion state for a document."""
 
-    document = await mongo.collection("documents").find_one({"doc_id": doc_id})
+    document = await mongo.collection("documents").find_one({"doc_id": doc_id}, {"_id": 0})
     if not document:
         raise DocumentNotFoundError(f"No document with id: {doc_id}")
     status = document.get("status")

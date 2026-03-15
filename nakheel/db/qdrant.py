@@ -41,13 +41,11 @@ class QdrantDatabase:
             return
         except UnexpectedResponse:
             pass
-        except Exception:
-            pass
         self.client.create_collection(
             collection_name=self.settings.QDRANT_COLLECTION,
             vectors_config={
                 "dense": VectorParams(
-                    size=1024,
+                    size=self.settings.OPENAI_EMBEDDING_DIMENSIONS,
                     distance=Distance.COSINE,
                     on_disk=False,
                     hnsw_config=HnswConfigDiff(m=16, ef_construct=200),
