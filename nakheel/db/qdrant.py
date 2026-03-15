@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 
 from qdrant_client import QdrantClient
 from qdrant_client.http.exceptions import UnexpectedResponse
@@ -16,11 +17,19 @@ from qdrant_client.models import (
 
 from nakheel.config import Settings
 
+try:
+    from llama_index.core.vector_stores.types import VectorStoreQuery
+    from llama_index.vector_stores.qdrant import QdrantVectorStore
+except ImportError:  # pragma: no cover
+    VectorStoreQuery = None
+    QdrantVectorStore = None
+
 
 class QdrantDatabase:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
         self.client: QdrantClient | None = None
+        self._vector_store = None
 
     def connect(self) -> None:
         self.client = QdrantClient(
@@ -33,6 +42,7 @@ class QdrantDatabase:
     def close(self) -> None:
         if self.client is not None:
             self.client.close()
+        self._vector_store = None
 
     def ensure_collection(self) -> None:
         assert self.client is not None
@@ -65,6 +75,9 @@ class QdrantDatabase:
         except Exception:
             return False
 
+    def llama_index_backend_available(self) -> bool:
+        return self._get_vector_store() is not None
+
     def upsert_points(self, points: list) -> None:
         assert self.client is not None
         self.client.upsert(collection_name=self.settings.QDRANT_COLLECTION, points=points)
@@ -80,6 +93,9 @@ class QdrantDatabase:
         await asyncio.to_thread(self.delete_points, point_ids)
 
     def dense_search(self, vector: list[float], limit: int):
+        vector_store = self._get_vector_store()
+        if vector_store is not None and VectorStoreQuery is not None:
+            return self._dense_search_with_llama_index(vector_store, vector, limit)
         assert self.client is not None
         return self.client.query_points(
             collection_name=self.settings.QDRANT_COLLECTION,
@@ -104,3 +120,57 @@ class QdrantDatabase:
 
     async def sparse_search_async(self, sparse_weights: dict[int, float], limit: int):
         return await asyncio.to_thread(self.sparse_search, sparse_weights, limit)
+
+    def _get_vector_store(self):
+        if self._vector_store is not None:
+            return self._vector_store
+        if self.client is None or QdrantVectorStore is None:
+            return None
+        try:
+            self._vector_store = QdrantVectorStore(
+                client=self.client,
+                collection_name=self.settings.QDRANT_COLLECTION,
+            )
+        except Exception:
+            self._vector_store = None
+        return self._vector_store
+
+    @staticmethod
+    def _normalize_llama_index_result(result) -> list:
+        ids = list(getattr(result, "ids", None) or [])
+        nodes = list(getattr(result, "nodes", None) or [])
+        similarities = list(getattr(result, "similarities", None) or [])
+        normalized = []
+
+        if nodes:
+            for index, node in enumerate(nodes):
+                payload = dict(getattr(node, "metadata", {}) or {})
+                chunk_id = payload.get("chunk_id") or (ids[index] if index < len(ids) else getattr(node, "node_id", None))
+                payload.setdefault("chunk_id", chunk_id)
+                normalized.append(
+                    SimpleNamespace(
+                        id=chunk_id,
+                        payload=payload,
+                        score=similarities[index] if index < len(similarities) else None,
+                    )
+                )
+            return normalized
+
+        for index, chunk_id in enumerate(ids):
+            normalized.append(
+                SimpleNamespace(
+                    id=chunk_id,
+                    payload={"chunk_id": chunk_id},
+                    score=similarities[index] if index < len(similarities) else None,
+                )
+            )
+        return normalized
+
+    def _dense_search_with_llama_index(self, vector_store, vector: list[float], limit: int):
+        result = vector_store.query(
+            VectorStoreQuery(
+                query_embedding=vector,
+                similarity_top_k=limit,
+            )
+        )
+        return self._normalize_llama_index_result(result)

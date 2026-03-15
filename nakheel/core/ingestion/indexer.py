@@ -108,12 +108,13 @@ class DocumentIndexer:
             filename = queued_file.filename or "document.pdf"
             doc_id = new_id("doc")
             file_size_kb = round(len(queued_file.file_bytes) / 1024, 2)
-            item = DocumentBatchItem(doc_id=doc_id, filename=filename, current_step="queued")
+            item = DocumentBatchItem(doc_id=doc_id, filename=filename, current_step="validating")
             try:
                 self._validate_pdf_upload(filename, queued_file.file_bytes)
                 doc_dir = batch_dir / doc_id
                 doc_dir.mkdir(parents=True, exist_ok=True)
                 (doc_dir / "original.pdf").write_bytes(queued_file.file_bytes)
+                item.current_step = "queued"
                 await self._create_document_record(
                     doc_id=doc_id,
                     batch_id=batch_id,
@@ -124,7 +125,7 @@ class DocumentIndexer:
                     tags=tags,
                     file_size_kb=file_size_kb,
                     status=DocumentStatus.PENDING,
-                    current_step="queued",
+                    current_step=item.current_step,
                 )
             except Exception as exc:
                 item.status = DocumentStatus.FAILED
@@ -189,6 +190,14 @@ class DocumentIndexer:
 
                 file_path = batch_dir / item["doc_id"] / "original.pdf"
                 try:
+                    async def track_progress(step: str) -> None:
+                        item["status"] = DocumentStatus.PROCESSING.value
+                        item["current_step"] = step
+                        item["error_detail"] = None
+                        batch["updated_at"] = datetime.now(UTC)
+                        batch["status"] = DocumentBatchStatus.PROCESSING.value
+                        await self._save_batch(batch)
+
                     result = await self._index_pdf_document(
                         doc_id=item["doc_id"],
                         batch_id=batch_id,
@@ -199,6 +208,7 @@ class DocumentIndexer:
                         tags=batch.get("tags", []),
                         language_hint=batch.get("language_hint", "auto"),
                         create_record=False,
+                        progress_callback=track_progress,
                     )
                     item["status"] = DocumentStatus.INDEXED.value
                     item["current_step"] = "indexed"
@@ -308,6 +318,7 @@ class DocumentIndexer:
         tags: list[str],
         language_hint: str,
         create_record: bool,
+        progress_callback=None,
     ) -> dict:
         """Parse and index a PDF source."""
 
@@ -333,6 +344,8 @@ class DocumentIndexer:
         pdf_path.write_bytes(file_bytes)
         try:
             await self._set_document_state(doc_id, status=DocumentStatus.PROCESSING, current_step="parsing")
+            if progress_callback is not None:
+                await progress_callback("parsing")
             markdown, pages = await self.parser.parse_to_markdown_async(pdf_path, parsed_path)
         except Exception as exc:
             await self._mark_document_failed(doc_id, self._error_detail(exc))
@@ -353,6 +366,7 @@ class DocumentIndexer:
             file_size_kb=file_size_kb,
             total_pages=pages,
             started=started,
+            progress_callback=progress_callback,
         )
 
     async def _index_text_content(
@@ -369,23 +383,31 @@ class DocumentIndexer:
         file_size_kb: float,
         total_pages: int,
         started: float,
+        progress_callback=None,
     ) -> dict:
         """Persist a text source after chunking and embedding it."""
 
+        qdrant_ids: list[str] = []
+        points: list[PointStruct] = []
+        upsert_succeeded = False
+        document_marked_indexed = False
         try:
             await self._set_document_state(doc_id, status=DocumentStatus.PROCESSING, current_step="chunking")
+            if progress_callback is not None:
+                await progress_callback("chunking")
             chunks = self.chunker.chunk_markdown(raw_text, doc_id)
             if not chunks:
                 raise IndexingError("No valid chunks were produced")
 
             language = detect_language(raw_text[:1000]).code if language_hint == "auto" else language_hint
+            await self._set_document_state(doc_id, status=DocumentStatus.PROCESSING, current_step="embedding")
+            if progress_callback is not None:
+                await progress_callback("embedding")
             dense_vectors, sparse_vectors = await asyncio.gather(
                 self.dense_embedder.embed_texts_async([chunk.text for chunk in chunks]),
                 asyncio.to_thread(self.sparse_embedder.fit_transform, [chunk.text for chunk in chunks]),
             )
 
-            points = []
-            qdrant_ids: list[str] = []
             for chunk, dense_vec, sparse_vec in zip(chunks, dense_vectors, sparse_vectors):
                 qdrant_ids.append(chunk.chunk_id)
                 points.append(
@@ -415,8 +437,9 @@ class DocumentIndexer:
                         },
                     )
                 )
-            upsert_succeeded = False
-            document_marked_indexed = False
+            await self._set_document_state(doc_id, status=DocumentStatus.PROCESSING, current_step="persisting")
+            if progress_callback is not None:
+                await progress_callback("persisting")
             await self.qdrant.upsert_points_async(points)
             upsert_succeeded = True
             await self.mongo.collection("chunks").insert_many([chunk.model_dump(mode="json") for chunk in chunks])
@@ -461,12 +484,12 @@ class DocumentIndexer:
                 "processing_time_ms": int((time.perf_counter() - started) * 1000),
             }
         except Exception as exc:
-            if "upsert_succeeded" in locals() and upsert_succeeded and not document_marked_indexed:
+            if upsert_succeeded and not document_marked_indexed:
                 try:
                     await self.qdrant.delete_points_async(qdrant_ids)
                 except Exception:
                     pass
-            if "document_marked_indexed" not in locals() or not document_marked_indexed:
+            if not document_marked_indexed:
                 await self._mark_document_failed(doc_id, self._error_detail(exc))
             raise
 

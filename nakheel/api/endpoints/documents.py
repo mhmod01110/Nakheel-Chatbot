@@ -12,7 +12,7 @@ from nakheel.core.ingestion.indexer import DocumentIndexer, QueuedPdf
 from nakheel.db.mongo import MongoDatabase
 from nakheel.db.qdrant import QdrantDatabase
 from nakheel.exceptions import BadRequestError, DocumentNotFoundError
-from nakheel.models.api import RawTextInjectRequest
+from nakheel.models.api import DocumentBatchResponse, DocumentListResponse, RawTextInjectRequest
 
 router = APIRouter(prefix="/documents")
 
@@ -20,6 +20,7 @@ router = APIRouter(prefix="/documents")
 @router.post(
     "/inject",
     status_code=status.HTTP_202_ACCEPTED,
+    response_model=DocumentBatchResponse,
     openapi_extra={
         "requestBody": {
             "content": {
@@ -50,7 +51,7 @@ router = APIRouter(prefix="/documents")
 )
 async def inject_documents(
     request: Request,
-    files: List[UploadFile] = File(...),
+    files: Annotated[List[UploadFile], File(...)],
     title: Optional[str] = Form(default=None),
     description: Optional[str] = Form(default=None),
     tags: Optional[str] = Form(default=None),
@@ -59,9 +60,11 @@ async def inject_documents(
 ):
     """Create an asynchronous PDF ingestion batch and return immediately."""
 
-    queued_files = [
-        QueuedPdf(filename=uploaded.filename or "document.pdf", file_bytes=await uploaded.read()) for uploaded in files
-    ]
+    queued_files: list[QueuedPdf] = []
+    for uploaded in files:
+        queued_files.append(
+            QueuedPdf(filename=uploaded.filename or "document.pdf", file_bytes=await uploaded.read())
+        )
     parsed_tags = [tag.strip() for tag in tags.split(",")] if tags else []
     batch = await indexer.create_document_batch(
         files=queued_files,
@@ -112,7 +115,7 @@ async def inject_raw_text(
     )
 
 
-@router.get("/batches/{batch_id}")
+@router.get("/batches/{batch_id}", response_model=DocumentBatchResponse)
 async def get_document_batch_status(batch_id: str, indexer: DocumentIndexer = Depends(get_indexer)):
     """Return the latest persisted ingestion state for a submitted PDF batch."""
 
@@ -173,7 +176,7 @@ async def delete_document(
     }
 
 
-@router.get("")
+@router.get("", response_model=DocumentListResponse)
 async def list_documents(
     page: int = 1,
     per_page: int = 20,
