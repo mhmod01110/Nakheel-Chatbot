@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime
-from typing import Annotated, List
+from typing import Annotated, List, Optional
 
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile, status
 
@@ -19,11 +19,11 @@ router = APIRouter(prefix="/documents")
 @router.post("/inject", status_code=status.HTTP_202_ACCEPTED)
 async def inject_documents(
     request: Request,
-    files: Annotated[List[UploadFile], File(description="Upload one or more PDF files")],
-    title: Annotated[str | None, Form()] = None,
-    description: Annotated[str | None, Form()] = None,
-    tags: Annotated[str | None, Form()] = None,
-    language: Annotated[str, Form()] = "auto",
+    files: List[UploadFile] = File(description="Upload one or more PDF files"),
+    title: Optional[str] = Form(default=None),
+    description: Optional[str] = Form(default=None),
+    tags: Optional[str] = Form(default=None),
+    language: str = Form(default="auto"),
     indexer: DocumentIndexer = Depends(get_indexer),
 ):
     """Create an asynchronous PDF ingestion batch and return immediately."""
