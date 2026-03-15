@@ -24,7 +24,4 @@ USER appuser
 
 EXPOSE 7000
 
-HEALTHCHECK --interval=15s --timeout=10s --retries=5 \
-  CMD curl -sf http://localhost:7000/api/v1/health || exit 1
-
 CMD ["python", "docker/wait_for_services.py"]
