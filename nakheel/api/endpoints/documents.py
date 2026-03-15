@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, File, Form, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Request, UploadFile, status
 
 from nakheel.api.deps import get_indexer, get_mongo, get_qdrant
-from nakheel.core.ingestion.indexer import DocumentIndexer
+from nakheel.core.ingestion.indexer import DocumentIndexer, QueuedPdf
 from nakheel.db.mongo import MongoDatabase
 from nakheel.db.qdrant import QdrantDatabase
 from nakheel.exceptions import BadRequestError, DocumentNotFoundError
@@ -14,29 +15,39 @@ from nakheel.models.api import RawTextInjectRequest
 router = APIRouter(prefix="/documents")
 
 
-@router.post("/inject")
-async def inject_document(
-    file: UploadFile = File(...),
+@router.post("/inject", status_code=status.HTTP_202_ACCEPTED)
+async def inject_documents(
+    request: Request,
+    files: list[UploadFile] = File(...),
     title: str | None = Form(default=None),
     description: str | None = Form(default=None),
     tags: str | None = Form(default=None),
     language: str = Form(default="auto"),
-    async_mode: bool = Form(default=False, alias="async"),
     indexer: DocumentIndexer = Depends(get_indexer),
 ):
-    """Index an uploaded PDF into the knowledge base."""
+    """Create an asynchronous PDF ingestion batch and return immediately."""
 
-    file_bytes = await file.read()
+    queued_files = [
+        QueuedPdf(filename=uploaded.filename or "document.pdf", file_bytes=await uploaded.read()) for uploaded in files
+    ]
     parsed_tags = [tag.strip() for tag in tags.split(",")] if tags else []
-    return await indexer.inject_document(
-        filename=file.filename or "document.pdf",
-        file_bytes=file_bytes,
+    batch = await indexer.create_document_batch(
+        files=queued_files,
         title=title,
         description=description,
         tags=parsed_tags,
         language_hint=language,
-        async_mode=async_mode,
     )
+
+    if batch["pending_files"] > 0:
+        batch_tasks = getattr(request.app.state, "document_batch_tasks", None)
+        if batch_tasks is None:
+            batch_tasks = set()
+            request.app.state.document_batch_tasks = batch_tasks
+        task = asyncio.create_task(indexer.process_document_batch(batch["batch_id"]))
+        batch_tasks.add(task)
+        task.add_done_callback(batch_tasks.discard)
+    return batch
 
 
 @router.post("/parse")
@@ -67,6 +78,13 @@ async def inject_raw_text(
         tags=payload.tags,
         language_hint=payload.language,
     )
+
+
+@router.get("/batches/{batch_id}")
+async def get_document_batch_status(batch_id: str, indexer: DocumentIndexer = Depends(get_indexer)):
+    """Return the latest persisted ingestion state for a submitted PDF batch."""
+
+    return await indexer.get_document_batch_status(batch_id)
 
 
 @router.delete("/{doc_id}")
@@ -148,4 +166,6 @@ async def get_document_status(doc_id: str, mongo: MongoDatabase = Depends(get_mo
         "progress_percent": 100 if status == "indexed" else 0,
         "current_step": document.get("current_step"),
         "estimated_remaining_seconds": 0 if status == "indexed" else None,
+        "batch_id": document.get("batch_id"),
+        "error_detail": document.get("error_detail"),
     }

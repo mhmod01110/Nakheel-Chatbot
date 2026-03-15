@@ -15,6 +15,16 @@ class DocumentStatus(str, Enum):
     FAILED = "failed"
 
 
+class DocumentBatchStatus(str, Enum):
+    """Lifecycle states for an ingestion batch."""
+
+    PENDING = "pending"
+    PROCESSING = "processing"
+    COMPLETED = "completed"
+    COMPLETED_WITH_ERRORS = "completed_with_errors"
+    FAILED = "failed"
+
+
 class DocumentSourceType(str, Enum):
     """Supported document ingestion origins."""
 
@@ -26,6 +36,7 @@ class DocumentMetadata(BaseModel):
     """Stored metadata for a source document in MongoDB."""
 
     doc_id: str
+    batch_id: str | None = None
     filename: str
     source_type: DocumentSourceType = DocumentSourceType.PDF
     title: str | None = None
@@ -40,3 +51,33 @@ class DocumentMetadata(BaseModel):
     tags: list[str] = Field(default_factory=list)
     description: str | None = None
     current_step: str | None = None
+    error_detail: str | None = None
+
+
+class DocumentBatchItem(BaseModel):
+    """Per-document status tracking inside a batch."""
+
+    doc_id: str
+    filename: str
+    status: DocumentStatus = DocumentStatus.PENDING
+    current_step: str | None = None
+    error_detail: str | None = None
+    total_pages: int = 0
+    total_chunks: int = 0
+    language: str | None = None
+    indexed_at: datetime | None = None
+
+
+class DocumentBatchMetadata(BaseModel):
+    """Stored metadata for a batch document ingestion job."""
+
+    batch_id: str
+    status: DocumentBatchStatus = DocumentBatchStatus.PENDING
+    title: str | None = None
+    description: str | None = None
+    tags: list[str] = Field(default_factory=list)
+    language_hint: str = "auto"
+    created_at: datetime
+    updated_at: datetime
+    completed_at: datetime | None = None
+    items: list[DocumentBatchItem] = Field(default_factory=list)

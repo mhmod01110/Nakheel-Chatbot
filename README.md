@@ -4,7 +4,7 @@ FastAPI implementation of the Nakheel bilingual RAG chatbot for New Valley Gover
 
 ## What is included
 
-- Synchronous PDF parse and inject endpoints
+- Synchronous PDF parse plus asynchronous batch PDF inject endpoints
 - Hybrid retrieval with dense + sparse search abstractions
 - Domain-guarded chat sessions with source references
 - MongoDB persistence for documents, chunks, sessions, messages, and audit logs
@@ -22,7 +22,9 @@ Copy-Item .env.example .env
 
 2. Add your `OPENAI_API_KEY` in `.env`.
 
-3. Start the full stack:
+3. Start MongoDB locally on your machine.
+
+4. Start the Docker stack for the API and Qdrant:
 
 ```powershell
 ./run.ps1
@@ -37,7 +39,7 @@ docker compose up --build
 Services:
 
 - API: `http://localhost:7000`
-- MongoDB: `mongodb://localhost:27017`
+- MongoDB: run locally on your machine and make it reachable from Docker at `host.docker.internal:27017`
 - Qdrant: `http://localhost:6333`
 
 Stop everything:
@@ -106,6 +108,18 @@ Parse a PDF:
 
 ```powershell
 curl -Method Post http://localhost:7000/api/v1/documents/parse -Form @{ file = Get-Item .\sample.pdf }
+```
+
+Submit a PDF batch:
+
+```powershell
+curl -Method Post http://localhost:7000/api/v1/documents/inject -Form @{ files = Get-Item .\sample.pdf }
+```
+
+Check batch status:
+
+```powershell
+curl http://localhost:7000/api/v1/documents/batches/<batch_id>
 ```
 
 ## Test

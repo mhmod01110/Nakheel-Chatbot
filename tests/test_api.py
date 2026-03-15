@@ -37,11 +37,50 @@ class FakeLLM:
 
 
 class FakeIndexer:
+    def __init__(self):
+        self.batches = {}
+
     async def parse_only(self, filename, file_bytes):
         return {"filename": filename, "format": "markdown", "content": "# Parsed"}
 
     async def inject_document(self, **kwargs):
         return {"doc_id": "doc-1", "status": "indexed"}
+
+    async def create_document_batch(self, files, title, description, tags, language_hint):
+        batch = {
+            "batch_id": "batch-1",
+            "status": "pending",
+            "total_files": len(files),
+            "pending_files": len(files),
+            "processing_files": 0,
+            "indexed_files": 0,
+            "failed_files": 0,
+            "created_at": datetime.now(UTC).isoformat(),
+            "updated_at": datetime.now(UTC).isoformat(),
+            "completed_at": None,
+            "items": [
+                {
+                    "doc_id": f"doc-{index + 1}",
+                    "filename": file.filename,
+                    "status": "pending",
+                    "current_step": "queued",
+                    "error_detail": None,
+                    "total_pages": 0,
+                    "total_chunks": 0,
+                    "language": None,
+                    "indexed_at": None,
+                }
+                for index, file in enumerate(files)
+            ],
+        }
+        self.batches[batch["batch_id"]] = batch
+        return batch
+
+    async def process_document_batch(self, batch_id):
+        return None
+
+    async def get_document_batch_status(self, batch_id):
+        return self.batches[batch_id]
 
     async def inject_raw_text(self, **kwargs):
         return {"doc_id": "doc-text-1", "status": "indexed", "filename": "copied_doc"}
@@ -162,3 +201,34 @@ def test_inject_raw_text_endpoint():
     response = client.post("/api/v1/documents/inject-text", json={"content": "Copied text about New Valley"})
     assert response.status_code == 200
     assert response.json()["doc_id"] == "doc-text-1"
+
+
+def test_inject_documents_creates_batch():
+    client = build_test_client()
+    response = client.post(
+        "/api/v1/documents/inject",
+        files=[
+            ("files", ("first.pdf", b"%PDF-1.4 first", "application/pdf")),
+            ("files", ("second.pdf", b"%PDF-1.4 second", "application/pdf")),
+        ],
+        data={"language": "auto"},
+    )
+    assert response.status_code == 202
+    body = response.json()
+    assert body["batch_id"] == "batch-1"
+    assert body["total_files"] == 2
+    assert body["pending_files"] == 2
+
+
+def test_get_document_batch_status_endpoint():
+    client = build_test_client()
+    client.post(
+        "/api/v1/documents/inject",
+        files=[("files", ("first.pdf", b"%PDF-1.4 first", "application/pdf"))],
+        data={"language": "auto"},
+    )
+    response = client.get("/api/v1/documents/batches/batch-1")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["batch_id"] == "batch-1"
+    assert body["items"][0]["filename"] == "first.pdf"

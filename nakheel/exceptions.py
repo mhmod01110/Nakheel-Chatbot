@@ -26,6 +26,12 @@ class DocumentNotFoundError(NakheelBaseException):
     title = "Document Not Found"
 
 
+class DocumentBatchNotFoundError(NakheelBaseException):
+    status_code = 404
+    error_code = "DOCUMENT_BATCH_NOT_FOUND"
+    title = "Document Batch Not Found"
+
+
 class ParseError(NakheelBaseException):
     status_code = 422
     error_code = "PARSE_ERROR"
@@ -60,4 +66,3 @@ class NotImplementedMvpError(NakheelBaseException):
     status_code = 400
     error_code = "NOT_IMPLEMENTED_IN_MVP"
     title = "Feature Not Implemented"
-

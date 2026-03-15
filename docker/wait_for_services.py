@@ -20,7 +20,7 @@ def wait_for(host: str, port: int, service_name: str, timeout_seconds: int = 90)
 
 
 def main() -> int:
-    mongo_uri = os.getenv("MONGODB_URI", "mongodb://mongo:27017")
+    mongo_uri = os.getenv("MONGODB_URI", "mongodb://host.docker.internal:27017")
     qdrant_host = os.getenv("QDRANT_HOST", "qdrant")
     qdrant_port = int(os.getenv("QDRANT_PORT", "6333"))
 
@@ -46,4 +46,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
-

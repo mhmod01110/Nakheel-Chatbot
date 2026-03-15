@@ -24,8 +24,12 @@ class MongoDatabase:
     async def ensure_indexes(self) -> None:
         assert self.db is not None
         await self.db.documents.create_index("doc_id", unique=True)
+        await self.db.documents.create_index("batch_id")
         await self.db.documents.create_index("status")
         await self.db.documents.create_index("uploaded_at")
+        await self.db.document_batches.create_index("batch_id", unique=True)
+        await self.db.document_batches.create_index("status")
+        await self.db.document_batches.create_index("created_at")
         await self.db.chunks.create_index("chunk_id", unique=True)
         await self.db.chunks.create_index("doc_id")
         await self.db.chunks.create_index("language")
@@ -49,4 +53,3 @@ class MongoDatabase:
 
     async def insert_one(self, name: str, payload: dict[str, Any]) -> None:
         await self.collection(name).insert_one(payload)
-
