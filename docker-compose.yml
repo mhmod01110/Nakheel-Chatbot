@@ -4,15 +4,14 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: nakheel-app
+    network_mode: host
     env_file:
       - .env
     environment:
-      MONGODB_URI: mongodb://host.docker.internal:27017
-      QDRANT_HOST: qdrant
+      MONGODB_URI: mongodb://127.0.0.1:27017
+      QDRANT_HOST: 127.0.0.1
       QDRANT_PORT: 6333
       TEMP_DIR: /app/tmp/nakheel
-    ports:
-      - "7000:7000"
     volumes:
       - ./tmp:/app/tmp
     depends_on:
