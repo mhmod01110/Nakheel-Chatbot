@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import shutil
 import time
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from qdrant_client.models import PointStruct, SparseVector
 
@@ -15,7 +16,13 @@ from nakheel.core.ingestion.parser import DocumentParser
 from nakheel.core.ingestion.sparse_embedder import SparseEmbedder
 from nakheel.db.mongo import MongoDatabase
 from nakheel.db.qdrant import QdrantDatabase
-from nakheel.exceptions import BadRequestError, DocumentBatchNotFoundError, IndexingError
+from nakheel.exceptions import (
+    BadRequestError,
+    DocumentBatchNotFoundError,
+    IndexingError,
+    ParsedFileExpiredError,
+    ParsedFileNotFoundError,
+)
 from nakheel.models.document import (
     DocumentBatchItem,
     DocumentBatchMetadata,
@@ -283,29 +290,65 @@ class DocumentIndexer:
         )
 
     async def parse_only(self, filename: str, file_bytes: bytes) -> dict:
-        """Parse a PDF and return Markdown without indexing it."""
+        """Parse a PDF into a temporary Markdown artifact without indexing it."""
 
         self._validate_pdf_upload(filename, file_bytes)
-        temp_id = new_id("tmp")
-        working_dir = self.settings.TEMP_DIR / temp_id
+        self._cleanup_expired_parsed_files()
+        parse_id = new_id("parsed")
+        working_dir = self.settings.TEMP_DIR / "parsed" / parse_id
         pdf_path = working_dir / "original.pdf"
-        parsed_path = working_dir / "parsed.md"
+        markdown_filename = f"{self._safe_markdown_stem(filename)}.md"
+        parsed_path = working_dir / markdown_filename
+        metadata_path = working_dir / "metadata.json"
         working_dir.mkdir(parents=True, exist_ok=True)
         pdf_path.write_bytes(file_bytes)
         started = time.perf_counter()
         try:
             markdown, pages = await self.parser.parse_to_markdown_async(pdf_path, parsed_path)
-            return {
+            expires_at = datetime.now(UTC) + self._parsed_file_ttl()
+            metadata = {
+                "parse_id": parse_id,
                 "filename": filename,
+                "markdown_filename": markdown_filename,
                 "format": "markdown",
-                "content": markdown,
                 "total_pages": pages,
                 "word_count": len(markdown.split()),
                 "language_detected": detect_language(markdown[:1000]).code,
                 "processing_time_ms": int((time.perf_counter() - started) * 1000),
+                "expires_at": expires_at.isoformat(),
             }
-        finally:
+            metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+            return {
+                **metadata,
+                "expires_at": expires_at,
+            }
+        except Exception:
             shutil.rmtree(working_dir, ignore_errors=True)
+            raise
+        finally:
+            if pdf_path.exists():
+                pdf_path.unlink()
+
+    def resolve_parsed_markdown(self, parse_id: str) -> dict:
+        """Resolve a staged Markdown artifact or raise if it is missing/expired."""
+
+        working_dir = self.settings.TEMP_DIR / "parsed" / parse_id
+        metadata_path = working_dir / "metadata.json"
+        if not metadata_path.exists():
+            raise ParsedFileNotFoundError(f"No parsed markdown file with id: {parse_id}")
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        expires_at = datetime.fromisoformat(metadata["expires_at"])
+        if expires_at <= datetime.now(UTC):
+            shutil.rmtree(working_dir, ignore_errors=True)
+            raise ParsedFileExpiredError(f"Parsed markdown file expired: {parse_id}")
+        markdown_path = working_dir / metadata["markdown_filename"]
+        if not markdown_path.exists():
+            raise ParsedFileNotFoundError(f"No parsed markdown file with id: {parse_id}")
+        return {
+            "path": markdown_path,
+            "markdown_filename": metadata["markdown_filename"],
+            "expires_at": expires_at,
+        }
 
     async def _index_pdf_document(
         self,
@@ -631,3 +674,33 @@ class DocumentIndexer:
 
         detail = getattr(exc, "detail", None)
         return str(detail or exc)
+
+    def _cleanup_expired_parsed_files(self) -> None:
+        """Best-effort cleanup for expired parsed Markdown artifacts."""
+
+        parsed_root = self.settings.TEMP_DIR / "parsed"
+        if not parsed_root.exists():
+            return
+        now = datetime.now(UTC)
+        for working_dir in parsed_root.iterdir():
+            metadata_path = working_dir / "metadata.json"
+            if not metadata_path.exists():
+                shutil.rmtree(working_dir, ignore_errors=True)
+                continue
+            try:
+                metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+                expires_at = datetime.fromisoformat(metadata["expires_at"])
+            except Exception:
+                shutil.rmtree(working_dir, ignore_errors=True)
+                continue
+            if expires_at <= now:
+                shutil.rmtree(working_dir, ignore_errors=True)
+
+    def _parsed_file_ttl(self):
+        return timedelta(hours=self.settings.PARSED_FILE_TTL_HOURS)
+
+    @staticmethod
+    def _safe_markdown_stem(filename: str) -> str:
+        stem = filename.rsplit(".", 1)[0].strip() or "parsed"
+        safe = "".join(char for char in stem if char.isalnum() or char in {" ", "-", "_"}).strip()
+        return safe or "parsed"

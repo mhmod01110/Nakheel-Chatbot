@@ -59,7 +59,7 @@ class Settings(BaseSettings):
 
     MAX_FILE_SIZE_MB: int = 50
     TEMP_DIR: Path = Field(default=Path("./tmp/nakheel"))
-    PARSED_FILE_TTL_HOURS: int = 1
+    PARSED_FILE_TTL_HOURS: int = 2
 
     RATE_LIMIT_REQUESTS_PER_MINUTE: int = 30
     RATE_LIMIT_INJECT_PER_HOUR: int = 10

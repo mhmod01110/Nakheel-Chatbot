@@ -32,6 +32,18 @@ class DocumentBatchNotFoundError(NakheelBaseException):
     title = "Document Batch Not Found"
 
 
+class ParsedFileNotFoundError(NakheelBaseException):
+    status_code = 404
+    error_code = "PARSED_FILE_NOT_FOUND"
+    title = "Parsed File Not Found"
+
+
+class ParsedFileExpiredError(NakheelBaseException):
+    status_code = 410
+    error_code = "PARSED_FILE_EXPIRED"
+    title = "Parsed File Expired"
+
+
 class ParseError(NakheelBaseException):
     status_code = 422
     error_code = "PARSE_ERROR"

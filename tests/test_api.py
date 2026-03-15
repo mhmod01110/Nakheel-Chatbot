@@ -1,4 +1,6 @@
 from datetime import UTC, datetime
+from pathlib import Path
+from tempfile import mkdtemp
 from types import SimpleNamespace
 
 from fastapi import FastAPI
@@ -142,9 +144,32 @@ class FakeLLM:
 class FakeIndexer:
     def __init__(self):
         self.batches = {}
+        self.parsed_root = Path(mkdtemp(prefix="nakheel-parsed-"))
+        self.parsed_files = {}
 
     async def parse_only(self, filename, file_bytes):
-        return {"filename": filename, "format": "markdown", "content": "# Parsed"}
+        parse_id = "parsed-1"
+        markdown_filename = "sample.md"
+        markdown_path = self.parsed_root / markdown_filename
+        markdown_path.write_text("# Parsed", encoding="utf-8")
+        self.parsed_files[parse_id] = {
+            "path": markdown_path,
+            "markdown_filename": markdown_filename,
+        }
+        return {
+            "parse_id": parse_id,
+            "filename": filename,
+            "markdown_filename": markdown_filename,
+            "format": "markdown",
+            "total_pages": 1,
+            "word_count": 2,
+            "language_detected": "en",
+            "processing_time_ms": 5,
+            "expires_at": datetime.now(UTC),
+        }
+
+    def resolve_parsed_markdown(self, parse_id):
+        return self.parsed_files[parse_id]
 
     async def inject_document(self, **kwargs):
         return {"doc_id": "doc-1", "status": "indexed"}
@@ -321,6 +346,23 @@ def test_inject_raw_text_endpoint():
     response = client.post("/api/v1/documents/inject-text", json={"content": "Copied text about New Valley"})
     assert response.status_code == 200
     assert response.json()["doc_id"] == "doc-text-1"
+
+
+def test_parse_document_returns_download_url_and_downloads_markdown():
+    client = build_test_client()
+    response = client.post(
+        "/api/v1/documents/parse",
+        files=[("file", ("sample.pdf", b"%PDF-1.4 sample", "application/pdf"))],
+        data={"format": "markdown"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["parse_id"] == "parsed-1"
+    assert body["download_url"].endswith("/api/v1/documents/parsed/parsed-1/download")
+
+    download_response = client.get("/api/v1/documents/parsed/parsed-1/download")
+    assert download_response.status_code == 200
+    assert download_response.text == "# Parsed"
 
 
 def test_inject_documents_creates_batch():

@@ -136,6 +136,19 @@ class DocumentListResponse(BaseModel):
     pagination: dict[str, int]
 
 
+class ParsedMarkdownResponse(BaseModel):
+    parse_id: str
+    filename: str
+    markdown_filename: str
+    format: str
+    total_pages: int
+    word_count: int
+    language_detected: str
+    processing_time_ms: int
+    expires_at: datetime
+    download_url: str
+
+
 class RawTextInjectRequest(BaseModel):
     content: str = Field(min_length=1, max_length=200000)
     title: str | None = None

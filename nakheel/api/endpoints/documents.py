@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from typing import Annotated, List, Optional
 
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile, status
+from fastapi.responses import FileResponse
 from loguru import logger
 
 from nakheel.api.deps import get_indexer, get_mongo, get_qdrant
@@ -12,7 +13,12 @@ from nakheel.core.ingestion.indexer import DocumentIndexer, QueuedPdf
 from nakheel.db.mongo import MongoDatabase
 from nakheel.db.qdrant import QdrantDatabase
 from nakheel.exceptions import BadRequestError, DocumentNotFoundError
-from nakheel.models.api import DocumentBatchResponse, DocumentListResponse, RawTextInjectRequest
+from nakheel.models.api import (
+    DocumentBatchResponse,
+    DocumentListResponse,
+    ParsedMarkdownResponse,
+    RawTextInjectRequest,
+)
 
 router = APIRouter(prefix="/documents")
 
@@ -85,18 +91,35 @@ async def inject_documents(
     return batch
 
 
-@router.post("/parse")
+@router.post("/parse", response_model=ParsedMarkdownResponse)
 async def parse_document(
+    request: Request,
     file: UploadFile = File(...),
     format: str = Form(default="markdown"),
     indexer: DocumentIndexer = Depends(get_indexer),
 ):
-    """Parse a PDF and return Markdown without creating vectors or DB records."""
+    """Parse a PDF into a temporary Markdown artifact and return a direct download link."""
 
     if format != "markdown":
         raise BadRequestError("Only markdown format is supported in the MVP")
     file_bytes = await file.read()
-    return await indexer.parse_only(filename=file.filename or "document.pdf", file_bytes=file_bytes)
+    parsed = await indexer.parse_only(filename=file.filename or "document.pdf", file_bytes=file_bytes)
+    return {
+        **parsed,
+        "download_url": str(request.url_for("download_parsed_markdown", parse_id=parsed["parse_id"])),
+    }
+
+
+@router.get("/parsed/{parse_id}/download")
+async def download_parsed_markdown(parse_id: str, indexer: DocumentIndexer = Depends(get_indexer)):
+    """Download a staged Markdown parse result before it expires."""
+
+    parsed = indexer.resolve_parsed_markdown(parse_id)
+    return FileResponse(
+        path=parsed["path"],
+        filename=parsed["markdown_filename"],
+        media_type="text/markdown",
+    )
 
 
 @router.post("/inject-text")
