@@ -1,6 +1,8 @@
 from types import SimpleNamespace
 from uuid import UUID
 
+import nakheel.db.qdrant as qdrant_module
+from nakheel.config import Settings
 from nakheel.db.qdrant import QdrantDatabase
 
 
@@ -59,3 +61,28 @@ def test_delete_points_normalizes_legacy_chunk_ids():
     assert calls[0][0] == "nakheel_chunks"
     assert calls[0][1][0] == "550e8400-e29b-41d4-a716-446655440000"
     UUID(calls[0][1][1])
+
+
+def test_llama_index_backend_is_disabled_for_non_llama_vector_names(monkeypatch):
+    calls = {"constructed": 0}
+
+    class FakeVectorStore:
+        def __init__(self, **_kwargs):
+            calls["constructed"] += 1
+
+    class FakeClient:
+        def get_collection(self, _collection_name):
+            return SimpleNamespace(
+                config=SimpleNamespace(
+                    params=SimpleNamespace(
+                        vectors={"dense": object()},
+                    )
+                )
+            )
+
+    monkeypatch.setattr(qdrant_module, "QdrantVectorStore", FakeVectorStore)
+    database = QdrantDatabase(Settings())
+    database.client = FakeClient()
+
+    assert database.llama_index_backend_available() is False
+    assert calls["constructed"] == 0

@@ -31,6 +31,7 @@ except ImportError:  # pragma: no cover
 LEGACY_POINT_ID_RE = re.compile(
     r"^[A-Za-z0-9_]+-(?P<uuid>[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$"
 )
+LLAMA_INDEX_DENSE_VECTOR_NAME = "text-dense"
 
 
 class QdrantDatabase:
@@ -38,6 +39,7 @@ class QdrantDatabase:
         self.settings = settings
         self.client: QdrantClient | None = None
         self._vector_store = None
+        self._vector_store_checked = False
 
     def connect(self) -> None:
         self.client = QdrantClient(
@@ -51,6 +53,7 @@ class QdrantDatabase:
         if self.client is not None:
             self.client.close()
         self._vector_store = None
+        self._vector_store_checked = False
 
     def ensure_collection(self) -> None:
         assert self.client is not None
@@ -136,9 +139,12 @@ class QdrantDatabase:
         return await asyncio.to_thread(self.sparse_search, sparse_weights, limit)
 
     def _get_vector_store(self):
-        if self._vector_store is not None:
+        if self._vector_store is not None or self._vector_store_checked:
             return self._vector_store
         if self.client is None or QdrantVectorStore is None:
+            return None
+        self._vector_store_checked = True
+        if not self._collection_supports_llama_index():
             return None
         try:
             self._vector_store = QdrantVectorStore(
@@ -148,6 +154,22 @@ class QdrantDatabase:
         except Exception:
             self._vector_store = None
         return self._vector_store
+
+    def _collection_supports_llama_index(self) -> bool:
+        assert self.client is not None
+        try:
+            collection = self.client.get_collection(self.settings.QDRANT_COLLECTION)
+        except Exception:
+            return False
+
+        vectors = getattr(collection.config.params, "vectors", None)
+        if isinstance(vectors, dict):
+            vector_names = set(vectors.keys())
+        elif hasattr(vectors, "keys"):
+            vector_names = set(vectors.keys())
+        else:
+            vector_names = set()
+        return LLAMA_INDEX_DENSE_VECTOR_NAME in vector_names
 
     @staticmethod
     def normalize_point_id(point_id):
