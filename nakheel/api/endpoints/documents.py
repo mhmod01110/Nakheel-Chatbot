@@ -16,10 +16,40 @@ from nakheel.models.api import RawTextInjectRequest
 router = APIRouter(prefix="/documents")
 
 
-@router.post("/inject", status_code=status.HTTP_202_ACCEPTED)
+@router.post(
+    "/inject",
+    status_code=status.HTTP_202_ACCEPTED,
+    openapi_extra={
+        "requestBody": {
+            "content": {
+                "multipart/form-data": {
+                    "schema": {
+                        "type": "object",
+                        "required": ["files"],
+                        "properties": {
+                            "files": {
+                                "type": "array",
+                                "items": {
+                                    "type": "string",
+                                    "format": "binary"  # 👈 This is the key
+                                },
+                                "description": "Upload one or more PDF files"
+                            },
+                            "title": {"type": "string"},
+                            "description": {"type": "string"},
+                            "tags": {"type": "string"},
+                            "language": {"type": "string", "default": "auto"}
+                        }
+                    }
+                }
+            },
+            "required": True
+        }
+    }
+)
 async def inject_documents(
     request: Request,
-    files: List[UploadFile] = File(description="Upload one or more PDF files"),
+    files: List[UploadFile] = File(...),
     title: Optional[str] = Form(default=None),
     description: Optional[str] = Form(default=None),
     tags: Optional[str] = Form(default=None),
